@@ -1,0 +1,23 @@
+### Test the Trading Analysis Endpoint
+POST http://localhost:8080/api/v1/trading/analyze
+Content-Type: application/json
+
+{
+  "ticker": "RELIANCE"
+}
+
+### Test with another ticker
+POST http://localhost:8080/api/v1/trading/analyze
+Content-Type: application/json
+
+{
+  "ticker": "HDFCBANK"
+}
+
+### Test error handling with missing ticker
+POST http://localhost:8080/api/v1/trading/analyze
+Content-Type: application/json
+
+{
+  "ticker": ""
+}
