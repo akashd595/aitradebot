@@ -2,6 +2,7 @@ package com.aitrade.aitradebot.controller;
 
 import com.aitrade.aitradebot.dto.LatestCandleResponse;
 import com.aitrade.aitradebot.entity.Candle;
+import com.aitrade.aitradebot.entity.StockPriceRecord;
 import com.aitrade.aitradebot.service.CandleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -42,5 +43,11 @@ public class CandleController {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
         return new ResponseEntity<>(response, HttpStatus.OK);
+    }
+
+    @GetMapping("/price-history/{stockCode}")
+    public ResponseEntity<List<StockPriceRecord>> getPriceHistory(@PathVariable String stockCode) {
+        List<StockPriceRecord> history = candleService.getPriceHistory(stockCode);
+        return new ResponseEntity<>(history, HttpStatus.OK);
     }
 }

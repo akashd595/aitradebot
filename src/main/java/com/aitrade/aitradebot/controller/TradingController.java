@@ -6,6 +6,7 @@ import com.aitrade.aitradebot.dto.PairAnalysisRequest;
 import com.aitrade.aitradebot.service.CandleService;
 import com.aitrade.aitradebot.service.PairsTradingEngineService;
 import com.aitrade.aitradebot.service.TradingEngineService;
+import com.aitrade.aitradebot.service.TrainingDatasetGeneratorService;
 import com.aitrade.aitradebot.entity.Candle;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -52,5 +53,24 @@ public class TradingController {
         
         Map<String, Object> response = pairsTradingEngineService.analyzeAssetPair(historyA, historyB);
         return ResponseEntity.ok(response);
+    }
+
+    @Autowired
+    private TrainingDatasetGeneratorService trainingDatasetGeneratorService;
+
+    @PostMapping("/generate-dataset/{stockCode}")
+    public ResponseEntity<Map<String, Object>> generateDataset(@PathVariable String stockCode) {
+        if (stockCode == null || stockCode.trim().isEmpty()) {
+            throw new IllegalArgumentException("Stock code is required.");
+        }
+        
+        int recordsCreated = trainingDatasetGeneratorService.generateDataset(stockCode);
+        
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("message", "Dataset generated successfully");
+        result.put("stockCode", stockCode);
+        result.put("recordsCreated", recordsCreated);
+        
+        return ResponseEntity.ok(result);
     }
 }

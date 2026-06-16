@@ -29,8 +29,7 @@ public class Candle {
     private Double highPrice;
     private Double lowPrice;
     private Long volume;
-    
-    @CreationTimestamp
+
     private LocalDateTime candleTime;
 
 }

@@ -2,7 +2,10 @@ package com.aitrade.aitradebot.service;
 
 import com.aitrade.aitradebot.dto.LatestCandleResponse;
 import com.aitrade.aitradebot.entity.Candle;
+import com.aitrade.aitradebot.entity.StockPriceRecord;
 import com.aitrade.aitradebot.repository.CandleRepository;
+import com.aitrade.aitradebot.repository.StockPriceRecordRepository;
+import com.aitrade.aitradebot.util.TechnicalIndicatorsUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
@@ -31,12 +34,22 @@ public class CandleService {
     @Autowired
     private CandleRepository candleRepository;
 
+    @Autowired
+    private StockPriceRecordRepository stockPriceRecordRepository;
+
+    @Autowired
+    private AiInferenceEngine aiInferenceEngine;
+
     public Candle saveCandle(@NonNull Candle candle) {
         return candleRepository.save(candle);
     }
 
     public List<Candle> getCandlesByStockCode(String stockCode) {
         return candleRepository.findByStockCodeOrderByCandleTimeAsc(stockCode);
+    }
+
+    public List<StockPriceRecord> getPriceHistory(String stockCode) {
+        return stockPriceRecordRepository.findByStockCodeOrderByFetchTimeAsc(stockCode);
     }
 
     public List<Candle> getBullishCandlesByStockCode(String stockCode) {
@@ -117,8 +130,9 @@ public class CandleService {
             candleRepository.deleteByStockCode(stockCode);
             
             int count = 0;
+            List<Candle> tempCandles = new java.util.ArrayList<>();
             for (int i = 0; i < timestamps.size(); i++) {
-                if (opens.get(i).isNull()) continue; // Skip null entries
+                if (opens.get(i).isNull() || closes.get(i).isNull() || highs.get(i).isNull() || lows.get(i).isNull()) continue; // Skip null/incomplete entries
                 
                 long timestamp = timestamps.get(i).asLong();
                 double open = opens.get(i).asDouble();
@@ -140,7 +154,79 @@ public class CandleService {
                 candle.setCandleTime(candleTime);
                 
                 candleRepository.save(candle);
+                tempCandles.add(candle);
                 count++;
+            }
+            
+            if (!tempCandles.isEmpty()) {
+                Candle latestSavedCandle = tempCandles.get(tempCandles.size() - 1);
+                int lastIndex = tempCandles.size() - 1;
+                
+                double currentPrice = latestSavedCandle.getClosePrice();
+                double ema20 = 0.0;
+                double ema200 = 0.0;
+                double rsi = 0.0;
+                
+                if (tempCandles.size() >= 20) {
+                    ema20 = TechnicalIndicatorsUtil.calculateEMA(tempCandles, 20, lastIndex);
+                }
+                if (tempCandles.size() >= 200) {
+                    ema200 = TechnicalIndicatorsUtil.calculateEMA(tempCandles, 200, lastIndex);
+                }
+                if (tempCandles.size() > 14) {
+                    rsi = TechnicalIndicatorsUtil.calculateRSI(tempCandles, 14, lastIndex);
+                }
+                
+                // Volume indicators
+                long latestVol = latestSavedCandle.getVolume();
+                long sumVol = 0;
+                int volPeriods = Math.min(10, tempCandles.size());
+                for (int j = lastIndex - volPeriods + 1; j <= lastIndex; j++) {
+                    sumVol += tempCandles.get(j).getVolume();
+                }
+                double avgVol = volPeriods > 0 ? (double) sumVol / volPeriods : 0.0;
+                double volumeRatio = avgVol > 0 ? (double) latestVol / avgVol : 1.0;
+                
+                double ema20Distance = ema20 > 0 ? ((currentPrice - ema20) / ema20) * 100.0 : 0.0;
+                double ema200Distance = ema200 > 0 ? ((currentPrice - ema200) / ema200) * 100.0 : 0.0;
+                
+                // Run Trading Analysis Filters to compute Target
+                double vwap = TechnicalIndicatorsUtil.calculateDailyVWAP(latestSavedCandle);
+                boolean isAbove200Ema = currentPrice > ema200;
+                boolean isRsiValid = rsi >= 42.0 && rsi <= 55.0;
+                boolean isWithinEma20Band = currentPrice >= ema20 * 0.98 && currentPrice <= ema20 * 1.02;
+                boolean isAboveVwap = currentPrice > vwap;
+                
+                boolean isSafeToBuy = isAbove200Ema && isRsiValid && isWithinEma20Band && isAboveVwap && (tempCandles.size() >= 200);
+                
+                if (isSafeToBuy) {
+                    float rsiFeature = (float) rsi;
+                    float distEma20 = (float) ((currentPrice - ema20) / ema20);
+                    float distEma200 = (float) ((currentPrice - ema200) / ema200);
+                    float volDelta = avgVol > 0 ? (float) ((latestVol - avgVol) / avgVol) : 0f;
+                    
+                    boolean aiPass = aiInferenceEngine.confirmSignal(rsiFeature, distEma20, distEma200, volDelta);
+                    isSafeToBuy = aiPass;
+                }
+                
+                int targetVal = isSafeToBuy ? 1 : 0;
+                
+                StockPriceRecord record = new StockPriceRecord();
+                record.setStockCode(stockCode);
+                record.setDate(latestSavedCandle.getCandleTime());
+                record.setPrice(currentPrice);
+                record.setVolume(latestVol);
+                record.setEma20(ema20);
+                record.setEma200(ema200);
+                record.setRsi(rsi);
+                record.setEma20Distance(ema20Distance);
+                record.setEma200Distance(ema200Distance);
+                record.setVolumeRatio(volumeRatio);
+                record.setTarget(targetVal);
+                
+                stockPriceRecordRepository.save(record);
+                logger.info("Saved stock price record snapshot for {}: Date={}, Price={}, RSI={}, EMA20_DISTANCE={}, EMA200_DISTANCE={}, VOLUME_RATIO={}, TARGET={}", 
+                        stockCode, record.getDate(), record.getPrice(), record.getRsi(), record.getEma20Distance(), record.getEma200Distance(), record.getVolumeRatio(), record.getTarget());
             }
             
             logger.info("Successfully fetched and saved {} real daily candles for {}", count, stockCode);
